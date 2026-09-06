@@ -308,13 +308,13 @@ export class AuthService {
         user.google_id = googleId;
       } else {
         // Create new account
-        const assignedRole = (role || 'ATTENDEE').toUpperCase();
-        const approvalStatus = assignedRole === 'ORGANIZER' ? 'pending' : 'approved';
+        const normalizedRole = (role || 'attendee').toLowerCase();
+        const approvalStatus = normalizedRole === 'organizer' ? 'pending' : 'approved';
         const insertRes = await query(
           `INSERT INTO users (email, full_name, role, avatar_url, google_id, approval_status, member_since)
            VALUES ($1, $2, $3, $4, $5, $6, $7)
            RETURNING *`,
-          [email, fullName, assignedRole, avatarUrl, googleId, approvalStatus, 'September 2026']
+          [email, fullName, normalizedRole, avatarUrl, googleId, approvalStatus, 'September 2026']
         );
         user = insertRes.rows[0];
 
