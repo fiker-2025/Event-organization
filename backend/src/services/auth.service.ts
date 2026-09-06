@@ -78,14 +78,62 @@ export class AuthService {
 
     // Check existing email
     const existing = await query<IUser>(
-      'SELECT id FROM users WHERE LOWER(email) = LOWER($1)',
+      'SELECT id, role, approval_status, is_active FROM users WHERE LOWER(email) = LOWER($1)',
       [email]
     );
 
     if (existing.rowCount && existing.rowCount > 0) {
-      const err: any = new Error('An account with this email already exists.');
-      err.statusCode = 409;
-      throw err;
+      const existingUser = existing.rows[0];
+      const existingRole = (existingUser.role || 'attendee').toLowerCase();
+
+      // If already registered with the same role, show error:
+      if (existingRole === normalizedRole) {
+        const err: any = new Error('You are already registered! Please sign in.');
+        err.statusCode = 409;
+        throw err;
+      }
+
+      // Vice versa: allow registration for the other role!
+      const salt = await bcrypt.genSalt(10);
+      const passwordHash = await bcrypt.hash(password, salt);
+      const updated = await query<IUser>(
+        `UPDATE users 
+         SET role = $1,
+             password_hash = COALESCE($2, password_hash),
+             full_name = COALESCE($3, full_name),
+             phone = COALESCE($4, phone),
+             bio = COALESCE($5, bio),
+             organization = COALESCE($6, organization),
+             approval_status = $7,
+             is_active = $8,
+             updated_at = NOW()
+         WHERE id = $9
+         RETURNING id, email, full_name, role, phone, bio, organization, avatar_url, visibility, member_since, is_active, approval_status, created_at, updated_at`,
+        [normalizedRole, passwordHash, full_name, phone, bio, organization, initialApprovalStatus, initialIsActive, existingUser.id]
+      );
+
+      const rawUser = updated.rows[0];
+      if (isOrganizer) {
+        const user = this.formatUserResponse(rawUser);
+        return {
+          user,
+          token: '',
+          isPendingApproval: true,
+          message: 'you will be using this sytem in 1 hour',
+        };
+      }
+
+      const token = signAuthToken({
+        userId: rawUser.id,
+        email: rawUser.email,
+        role: rawUser.role as UserRole,
+        fullName: rawUser.full_name,
+      });
+      const stats = await this.computeUserStats(rawUser.id);
+      return {
+        user: this.formatUserResponse(rawUser, stats),
+        token,
+      };
     }
 
     const salt = await bcrypt.genSalt(10);
@@ -316,11 +364,27 @@ export class AuthService {
       throw err;
     }
 
-    // If attempting to register but user already exists -> reject
+    const requestedRole = (role || 'attendee').toLowerCase();
+
+    // If attempting to register but user already exists:
     if (mode === 'register' && user) {
-      const err: any = new Error('You are already registered! Please sign in.');
-      err.statusCode = 409;
-      throw err;
+      const currentRole = (user.role || 'attendee').toLowerCase();
+
+      // If already registered with the SAME role -> reject
+      if (currentRole === requestedRole) {
+        const err: any = new Error('You are already registered! Please sign in.');
+        err.statusCode = 409;
+        throw err;
+      }
+
+      // Vice versa: allow registration for the other role!
+      const approvalStatus = requestedRole === 'organizer' ? 'pending' : 'approved';
+      await query(
+        'UPDATE users SET role = $1, approval_status = $2, updated_at = NOW() WHERE id = $3',
+        [requestedRole, approvalStatus, user.id]
+      );
+      user.role = requestedRole;
+      user.approval_status = approvalStatus;
     }
 
     // If registering and user does not exist, create the account
@@ -342,7 +406,12 @@ export class AuthService {
     }
 
     // 3. Generate your Sheeba JWT token
-    const token = signAuthToken(user);
+    const token = signAuthToken({
+      userId: user.id,
+      email: user.email,
+      role: (user.role || 'attendee').toUpperCase() as UserRole,
+      fullName: user.full_name,
+    });
     const stats = await AuthService.computeUserStats(user.id);
     return {
       user: AuthService.formatUserResponse(user, stats),
