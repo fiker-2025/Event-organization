@@ -4,6 +4,8 @@ import { query } from '../config/db';
 import { IUser, IUserSafe, UserRole } from '../types';
 import { signAuthToken } from '../utils/jwt.util';
 import { EmailService } from './email.service';
+import { OAuth2Client } from 'google-auth-library';
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 export class AuthService {
   static formatUserResponse(user: any, stats?: any) {
@@ -260,6 +262,76 @@ export class AuthService {
     return {
       success: true,
       message: 'Password has been reset successfully. You may now log in.',
-    };
+    };    
   }
+
+  
+    static async loginWithGoogle(credential: string, role?: string) {
+    // 1. Verify the ID token directly with Google
+    const ticket = await googleClient.verifyIdToken({
+      idToken: credential,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+
+    const payload = ticket.getPayload();
+    if (!payload || !payload.email) {
+      const err: any = new Error('Invalid Google credential.');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    if (!payload.email_verified) {
+      const err: any = new Error('Google email is not verified.');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const googleId = payload.sub;
+    const email = payload.email.toLowerCase().trim();
+    const fullName = payload.name || email.split('@')[0];
+    const avatarUrl = payload.picture;
+
+    // 2. Search database: first by google_id, then by email
+    let userRes = await query('SELECT * FROM users WHERE google_id = $1', [googleId]);
+    let user = userRes.rows[0];
+
+    if (!user) {
+      // Check if user previously registered with email/password
+      const emailRes = await query('SELECT * FROM users WHERE email = $1', [email]);
+      if (emailRes.rows.length > 0) {
+        user = emailRes.rows[0];
+        // Link Google ID to their existing account
+        await query(
+          'UPDATE users SET google_id = $1, avatar_url = COALESCE(avatar_url, $2) WHERE id = $3',
+          [googleId, avatarUrl, user.id]
+        );
+        user.google_id = googleId;
+      } else {
+        // Create new account
+        const assignedRole = (role || 'ATTENDEE').toUpperCase();
+        const approvalStatus = assignedRole === 'ORGANIZER' ? 'pending' : 'approved';
+        const insertRes = await query(
+          `INSERT INTO users (email, full_name, role, avatar_url, google_id, approval_status, member_since)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           RETURNING *`,
+          [email, fullName, assignedRole, avatarUrl, googleId, approvalStatus, 'September 2026']
+        );
+        user = insertRes.rows[0];
+
+        // Send welcome email
+        EmailService.sendWelcomeEmail(email, fullName).catch((e) =>
+          console.error('Welcome email dispatch failed:', e)
+        );
+      }
+    }
+
+    // 3. Generate your Sheeba JWT token
+    const token = signAuthToken(user);
+    const stats = await AuthService.computeUserStats(user.id);
+    return {
+      user: AuthService.formatUserResponse(user, stats),
+      token,
+    };
+  } 
+  
 }
