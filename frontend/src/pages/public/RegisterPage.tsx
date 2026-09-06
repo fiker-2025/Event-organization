@@ -175,7 +175,7 @@ export const RegisterPage: React.FC = () => {
                 try {
                   setIsLoading(true);
                   setErrorMsg(null);
-                  const loggedUser = await loginWithGoogle(credentialResponse.credential, selectedRole);
+                  const loggedUser = await loginWithGoogle(credentialResponse.credential, selectedRole, 'register');
                   if (redirectTarget) {
                     navigate(redirectTarget);
                   } else if (loggedUser.role === 'ORGANIZER') {

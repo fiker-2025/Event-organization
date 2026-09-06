@@ -266,7 +266,7 @@ export class AuthService {
   }
 
   
-    static async loginWithGoogle(credential: string, role?: string) {
+  static async loginWithGoogle(credential: string, role?: string, mode: 'login' | 'register' = 'login') {
     // 1. Verify the ID token directly with Google
     const ticket = await googleClient.verifyIdToken({
       idToken: credential,
@@ -296,8 +296,7 @@ export class AuthService {
     let user = userRes.rows[0];
 
     if (!user) {
-      // Check if user previously registered with email/password
-      const emailRes = await query('SELECT * FROM users WHERE email = $1', [email]);
+      const emailRes = await query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [email]);
       if (emailRes.rows.length > 0) {
         user = emailRes.rows[0];
         // Link Google ID to their existing account
@@ -306,23 +305,40 @@ export class AuthService {
           [googleId, avatarUrl, user.id]
         );
         user.google_id = googleId;
-      } else {
-        // Create new account
-        const normalizedRole = (role || 'attendee').toLowerCase();
-        const approvalStatus = normalizedRole === 'organizer' ? 'pending' : 'approved';
-        const insertRes = await query(
-          `INSERT INTO users (email, full_name, role, avatar_url, google_id, approval_status, member_since)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)
-           RETURNING *`,
-          [email, fullName, normalizedRole, avatarUrl, googleId, approvalStatus, 'September 2026']
-        );
-        user = insertRes.rows[0];
-
-        // Send welcome email
-        EmailService.sendWelcomeEmail(email, fullName).catch((e) =>
-          console.error('Welcome email dispatch failed:', e)
-        );
       }
+    }
+
+    // Check mode rules:
+    // If attempting to login but user doesn't exist -> reject
+    if (mode === 'login' && !user) {
+      const err: any = new Error('You have not registered yet. Please register first.');
+      err.statusCode = 404;
+      throw err;
+    }
+
+    // If attempting to register but user already exists -> reject
+    if (mode === 'register' && user) {
+      const err: any = new Error('You are already registered! Please sign in.');
+      err.statusCode = 409;
+      throw err;
+    }
+
+    // If registering and user does not exist, create the account
+    if (!user) {
+      const normalizedRole = (role || 'attendee').toLowerCase();
+      const approvalStatus = normalizedRole === 'organizer' ? 'pending' : 'approved';
+      const insertRes = await query(
+        `INSERT INTO users (email, full_name, role, avatar_url, google_id, approval_status, member_since)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING *`,
+        [email, fullName, normalizedRole, avatarUrl, googleId, approvalStatus, 'September 2026']
+      );
+      user = insertRes.rows[0];
+
+      // Send welcome email
+      EmailService.sendWelcomeEmail(email, fullName).catch((e) =>
+        console.error('Welcome email dispatch failed:', e)
+      );
     }
 
     // 3. Generate your Sheeba JWT token

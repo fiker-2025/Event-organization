@@ -129,7 +129,7 @@ export const api = {
       }
     },
 
-    googleLogin: async (data: { credential: string; role?: string }): Promise<{ user: User; token: string }> => {
+    googleLogin: async (data: { credential: string; role?: string; mode?: 'login' | 'register' }): Promise<{ user: User; token: string }> => {
       const res = await requestApi('/auth/google', {
         method: 'POST',
         body: JSON.stringify(data),

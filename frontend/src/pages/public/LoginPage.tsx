@@ -228,7 +228,11 @@ export const LoginPage: React.FC = () => {
                 try {
                   setIsLoading(true);
                   setErrorMsg(null);
-                  const loggedUser = await loginWithGoogle(credentialResponse.credential);
+                  const loggedUser = await loginWithGoogle(
+                    credentialResponse.credential,
+                    undefined,
+                    authMode === 'signup' ? 'register' : 'login'
+                  );
                   if (redirectTarget) {
                     navigate(redirectTarget);
                   } else if (loggedUser.role === 'ORGANIZER') {

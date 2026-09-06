@@ -76,12 +76,12 @@ export class AuthController {
 
   static async googleLogin(req: Request, res: Response, next: NextFunction) {
     try {
-      const { credential, role } = req.body;
+      const { credential, role, mode } = req.body;
       if (!credential) {
         sendError(res, 'Google credential is required.', 400);
         return;
       }
-      const result = await AuthService.loginWithGoogle(credential, role);
+      const result = await AuthService.loginWithGoogle(credential, role, mode || 'login');
       return sendSuccess(res, result, 'Google authentication successful.');
     } catch (error) {
       next(error);

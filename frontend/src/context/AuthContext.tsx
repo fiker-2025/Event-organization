@@ -14,7 +14,7 @@ interface AuthContextType {
   isAuthenticated: boolean;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<User>;
-  loginWithGoogle: (credential: string, role?: UserRole) => Promise<User>;
+  loginWithGoogle: (credential: string, role?: UserRole, mode?: 'login' | 'register') => Promise<User>;
   register: (userData: {
     email: string;
     password: string;
@@ -84,10 +84,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const loginWithGoogle = async (credential: string, role?: UserRole): Promise<User> => {
+  const loginWithGoogle = async (
+    credential: string,
+    role?: UserRole,
+    mode?: 'login' | 'register'
+  ): Promise<User> => {
     setIsLoading(true);
     try {
-      const res = await api.auth.googleLogin({ credential, role });
+      const res = await api.auth.googleLogin({ credential, role, mode });
       setUser(res.user);
       localStorage.setItem('sheba_auth_user', JSON.stringify(res.user));
       return res.user;
